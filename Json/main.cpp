@@ -48,25 +48,38 @@ namespace Benchmarks::Parse
     /** default size of the page in bytes on this system. **/
     const uint64_t pageSize = sysconf(_SC_PAGESIZE);
 
-    bool need_allocation(const std::string& buffer)
+    bool need_allocation(const char *data,
+                         const size_t length)
     {
-        return ((reinterpret_cast<uintptr_t>(buffer.data() + buffer.size() - 1) % pageSize) + simdjson::SIMDJSON_PADDING > pageSize);
+        return ((reinterpret_cast<uintptr_t>(data + length - 1) % pageSize) + simdjson::SIMDJSON_PADDING > pageSize);
     }
 
     simdjson::padded_string_view
-    get_padded_string_view(const std::string& buffer,
-                           simdjson::padded_string &jsonBuffer) {
-        if (need_allocation(buffer)) [[unlikely]]
+    to_padded_string_view(const char *data,
+                          const size_t length,
+                          simdjson::padded_string &jsonBuffer) {
+        if (need_allocation(data, length)) [[unlikely]]
         {
-            jsonBuffer = simdjson::padded_string(buffer.data(), buffer.size());
+            jsonBuffer = simdjson::padded_string(data, length);
             return jsonBuffer;
         }
         else [[likely]]
         {
-            return simdjson::padded_string_view(buffer.data(), buffer.size(), buffer.size() + simdjson::SIMDJSON_PADDING);
+            return simdjson::padded_string_view(data, length, length + simdjson::SIMDJSON_PADDING);
         }
     }
 
+    simdjson::padded_string_view get_padded_string(const std::string& buffer,
+                                                   simdjson::padded_string &jsonBuffer)
+    {
+        return to_padded_string_view(buffer.data(), buffer.size(), jsonBuffer);
+    }
+
+    simdjson::padded_string_view get_padded_string(const std::string_view& buffer,
+                                                   simdjson::padded_string &jsonBuffer)
+    {
+        return to_padded_string_view(buffer.data(), buffer.size(), jsonBuffer);
+    }
 
     void nlohmann()
     {
@@ -159,7 +172,22 @@ namespace Benchmarks::Parse
         simdjson::padded_string jsonBuffer; // only allocate if needed
 
         for (int i = 0; i < 1'000'000; ++i) {
-            parser.iterate(get_padded_string_view(json, jsonBuffer)).get(doc);
+            parser.iterate(get_padded_string(json, jsonBuffer)).get(doc);
+        }
+    }
+
+    void simd_json_ondemand_2_sv()
+    {
+        const std::string_view jsonSv { json };
+
+        PerfUtilities::ScopedTimer timer { "simd_json_ondemand_2"};
+
+        simdjson::ondemand::parser parser;
+        simdjson::ondemand::document doc;
+        simdjson::padded_string jsonBuffer; // only allocate if needed
+
+        for (int i = 0; i < 1'000'000; ++i) {
+            parser.iterate(get_padded_string(jsonSv, jsonBuffer)).get(doc);
         }
     }
 
@@ -195,6 +223,7 @@ namespace Benchmarks::Parse
         simd_json_ondemand();
         simd_json_ondemand_1();
         simd_json_ondemand_2();
+        simd_json_ondemand_2_sv();
 
         // std::cout << std::endl;
         // nlohmann_1();
